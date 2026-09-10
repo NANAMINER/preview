@@ -1,0 +1,75 @@
+name: Deploy Duck Farm Preview
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - site.tar.gz
+      - .github/workflows/deploy.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout preview repository
+        uses: actions/checkout@v6
+
+      - name: Check whether deployment is ready
+        id: ready
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -f site.tar.gz ]; then
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            echo 'No packaged Duck Farm preview exists yet; deployment is skipped.'
+            exit 0
+          fi
+
+          status="$(curl -sS -o /tmp/pages.json -w '%{http_code}' \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/pages")"
+
+          if [ "$status" = '200' ]; then
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'ready=false' >> "$GITHUB_OUTPUT"
+            echo "GitHub Pages is not enabled yet (HTTP $status); deployment is skipped until the source workflow enables it."
+          fi
+
+      - name: Extract packaged site
+        if: steps.ready.outputs.ready == 'true'
+        run: |
+          rm -rf _site
+          mkdir _site
+          tar -xzf site.tar.gz -C _site
+
+      - name: Configure GitHub Pages
+        if: steps.ready.outputs.ready == 'true'
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        if: steps.ready.outputs.ready == 'true'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        if: steps.ready.outputs.ready == 'true'
+        id: deployment
+        uses: actions/deploy-pages@v4
